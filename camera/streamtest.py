@@ -6,6 +6,7 @@ import cv2
 from deepface import DeepFace
 from deepface.models.FacialRecognition import FacialRecognition
 from deepface.commons.logger import Logger
+from dbcsv import save_csv
 
 logger = Logger(module="commons.realtime")
 
@@ -479,8 +480,11 @@ def analysis(
 
         
         if (shape == shape2) and save:
+            time_val = time.time()
+            cv2.imwrite((f"/home/mohe/Desktop/db/database/{time_val}.jpg"),  save_image)
             print("saved")
-            cv2.imwrite((f"/home/mohe/Desktop/db/database/sefic/{time.time()}.jpg"),  save_image)
+            # time.sleep(4)
+            save_csv(csv_path="/home/mohe/Desktop/db/RF_db.csv", db_path="/home/mohe/Desktop/db/database/sefic", saving_path=f"/home/mohe/Desktop/db/database")
             save = False
 
         if (shape != shape2):
