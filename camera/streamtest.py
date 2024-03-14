@@ -6,7 +6,7 @@ import cv2
 from deepface import DeepFace
 from deepface.models.FacialRecognition import FacialRecognition
 from deepface.commons.logger import Logger
-from dbcsv import save_csv
+# from dbcsv import save_csv
 
 logger = Logger(module="commons.realtime")
 
@@ -26,8 +26,11 @@ def analysis(
     time_threshold=5,
     frame_threshold=5,
 ):
+    count = 0
     shape = 0
     save = False
+
+    freeze_first = True
     # global variables
     text_color = (255, 255, 255)
     pivot_img_size = 112  # face recognition result image
@@ -64,7 +67,6 @@ def analysis(
     # -----------------------
     # visualization
     freeze = False
-    face_detected = False
     face_included_frames = 0  # freeze screen if face detected sequantially 5 frames
     freezed_frame = 0
     tic = time.time()
@@ -82,6 +84,7 @@ def analysis(
         raw_img = img.copy()
         resolution_x = img.shape[1]
         resolution_y = img.shape[0]
+        face_detected = False
 
         if freeze == False:
             try:
@@ -116,7 +119,6 @@ def analysis(
         detected_faces = []
         face_index = 0
         for x, y, w, h in faces:
-            face_detected = True
             if face_index == 0:
                 face_included_frames += 1  # increase frame for a single face
 
@@ -128,6 +130,9 @@ def analysis(
             shape = detected_face.shape[0]
             shape2 = detected_face.shape[1] ##########################################
             save_image = detected_face
+            if shape == shape2:
+                face_detected = True
+
             
 
             # -------------------------------------
@@ -137,358 +142,347 @@ def analysis(
 
             # -------------------------------------
 
-        if face_detected == True and face_included_frames == frame_threshold and freeze == False:
-            if shape != shape2:
-                freeze = True
-            else :
-                freeze = False
-            # base_img = img.copy()
+        if face_included_frames == frame_threshold and freeze == False:
             base_img = raw_img.copy()
             detected_faces_final = detected_faces.copy()
             tic = time.time()
+            freeze = True
+        
 
-        if freeze == True:
+        if freeze == True: 
 
-            toc = time.time()
-            if (toc - tic) < time_threshold:
+            # if freezed_frame == 0:
+            freeze_img = base_img.copy()
+            # here, np.uint8 handles showing white area issue
+            # freeze_img = np.zeros(resolution, np.uint8)
+            
 
-                if freezed_frame == 0:
-                    freeze_img = base_img.copy()
-                    # here, np.uint8 handles showing white area issue
-                    # freeze_img = np.zeros(resolution, np.uint8)
-                    
+            for detected_face in detected_faces_final:
+                x = detected_face[0]
+                y = detected_face[1]
+                w = detected_face[2]
+                h = detected_face[3]
 
-                    for detected_face in detected_faces_final:
-                        x = detected_face[0]
-                        y = detected_face[1]
-                        w = detected_face[2]
-                        h = detected_face[3]
+                cv2.rectangle(
+                    freeze_img, (x, y), (x + w, y + h), (67, 67, 67), 1
+                )  # draw rectangle to main image
 
-                        cv2.rectangle(
-                            freeze_img, (x, y), (x + w, y + h), (67, 67, 67), 1
-                        )  # draw rectangle to main image
+                # -------------------------------
+                # extract detected face
+                custom_face = base_img[y : y + h, x : x + w]
+                # --------------------------------
+                # face recognition
+                # call find function for custom_face
+                dfs = DeepFace.find(
+                    img_path=custom_face,
+                    db_path=db_path,
+                    model_name=model_name,
+                    detector_backend="skip",
+                    distance_metric=distance_metric,
+                    enforce_detection=False,
+                    silent=True,
+                )
 
-                        # -------------------------------
-                        # extract detected face
-                        custom_face = base_img[y : y + h, x : x + w]
-                        # --------------------------------
-                        # face recognition
-                        # call find function for custom_face
-                        dfs = DeepFace.find(
-                            img_path=custom_face,
-                            db_path=db_path,
-                            model_name=model_name,
-                            detector_backend="skip",
-                            distance_metric=distance_metric,
+                if len(dfs) > 0 :
+
+                    # directly access 1st item because custom face is extracted already
+                    df = dfs[0]
+
+                    if df.shape[0] > 0:
+                        candidate = df.iloc[0]
+                        label = candidate["identity"]
+
+                        # to use this source image as is
+                        display_img = cv2.imread(label)
+                        # to use extracted face
+                        source_objs = DeepFace.extract_faces(
+                            img_path=display_img,
+                            target_size=(pivot_img_size, pivot_img_size),
+                            detector_backend=detector_backend,
                             enforce_detection=False,
-                            silent=True,
+                            align=False,
                         )
 
-                        if len(dfs) > 0:
-                            # directly access 1st item because custom face is extracted already
-                            df = dfs[0]
+                        if len(source_objs) > 0:
+                            # extract 1st item directly
+                            source_obj = source_objs[0]
+                            display_img = source_obj["face"]
+                            display_img *= 255
+                            display_img = display_img[:, :, ::-1]
+                        # --------------------
+                        label = label.split("/")[-1]
 
-                            if df.shape[0] > 0:
-                                candidate = df.iloc[0]
-                                label = candidate["identity"]
+                        # customize source code:
+                        ####################
+                        
+                        ####################
+                        try:
+                            if (
+                                y - pivot_img_size > 0
+                                and x + w + pivot_img_size < resolution_x
+                            ):
+                                # top right
+                                freeze_img[
+                                    y - pivot_img_size : y,
+                                    x + w : x + w + pivot_img_size,
+                                ] = display_img
 
-                                # to use this source image as is
-                                display_img = cv2.imread(label)
-                                # to use extracted face
-                                source_objs = DeepFace.extract_faces(
-                                    img_path=display_img,
-                                    target_size=(pivot_img_size, pivot_img_size),
-                                    detector_backend=detector_backend,
-                                    enforce_detection=False,
-                                    align=False,
+                                overlay = freeze_img.copy()
+                                opacity = 0.4
+                                cv2.rectangle(
+                                    freeze_img,
+                                    (x + w, y),
+                                    (x + w + pivot_img_size, y + 20),
+                                    (46, 200, 255),
+                                    cv2.FILLED,
+                                )
+                                cv2.addWeighted(
+                                    overlay,
+                                    opacity,
+                                    freeze_img,
+                                    1 - opacity,
+                                    0,
+                                    freeze_img,
                                 )
 
-                                if len(source_objs) > 0:
-                                    # extract 1st item directly
-                                    source_obj = source_objs[0]
-                                    display_img = source_obj["face"]
-                                    display_img *= 255
-                                    display_img = display_img[:, :, ::-1]
-                                # --------------------
-                                label = label.split("/")[-1]
+                                cv2.putText(
+                                    freeze_img,
+                                    label,
+                                    (x + w, y + 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    text_color,
+                                    1,
+                                )
 
-                                # customize source code:
-                                ####################
-                                
-                                ####################
-                                try:
-                                    if (
-                                        y - pivot_img_size > 0
-                                        and x + w + pivot_img_size < resolution_x
-                                    ):
-                                        # top right
-                                        freeze_img[
-                                            y - pivot_img_size : y,
-                                            x + w : x + w + pivot_img_size,
-                                        ] = display_img
+                                # connect face and text
+                                cv2.line(
+                                    freeze_img,
+                                    (x + int(w / 2), y),
+                                    (x + 3 * int(w / 4), y - int(pivot_img_size / 2)),
+                                    (67, 67, 67),
+                                    1,
+                                )
+                                cv2.line(
+                                    freeze_img,
+                                    (x + 3 * int(w / 4), y - int(pivot_img_size / 2)),
+                                    (x + w, y - int(pivot_img_size / 2)),
+                                    (67, 67, 67),
+                                    1,
+                                )
 
-                                        overlay = freeze_img.copy()
-                                        opacity = 0.4
-                                        cv2.rectangle(
-                                            freeze_img,
-                                            (x + w, y),
-                                            (x + w + pivot_img_size, y + 20),
-                                            (46, 200, 255),
-                                            cv2.FILLED,
-                                        )
-                                        cv2.addWeighted(
-                                            overlay,
-                                            opacity,
-                                            freeze_img,
-                                            1 - opacity,
-                                            0,
-                                            freeze_img,
-                                        )
+                            elif (
+                                y + h + pivot_img_size < resolution_y
+                                and x - pivot_img_size > 0
+                            ):
+                                # bottom left
+                                freeze_img[
+                                    y + h : y + h + pivot_img_size,
+                                    x - pivot_img_size : x,
+                                ] = display_img
 
-                                        cv2.putText(
-                                            freeze_img,
-                                            label,
-                                            (x + w, y + 10),
-                                            cv2.FONT_HERSHEY_SIMPLEX,
-                                            0.5,
-                                            text_color,
-                                            1,
-                                        )
+                                overlay = freeze_img.copy()
+                                opacity = 0.4
+                                cv2.rectangle(
+                                    freeze_img,
+                                    (x - pivot_img_size, y + h - 20),
+                                    (x, y + h),
+                                    (46, 200, 255),
+                                    cv2.FILLED,
+                                )
+                                cv2.addWeighted(
+                                    overlay,
+                                    opacity,
+                                    freeze_img,
+                                    1 - opacity,
+                                    0,
+                                    freeze_img,
+                                )
 
-                                        # connect face and text
-                                        cv2.line(
-                                            freeze_img,
-                                            (x + int(w / 2), y),
-                                            (x + 3 * int(w / 4), y - int(pivot_img_size / 2)),
-                                            (67, 67, 67),
-                                            1,
-                                        )
-                                        cv2.line(
-                                            freeze_img,
-                                            (x + 3 * int(w / 4), y - int(pivot_img_size / 2)),
-                                            (x + w, y - int(pivot_img_size / 2)),
-                                            (67, 67, 67),
-                                            1,
-                                        )
+                                cv2.putText(
+                                    freeze_img,
+                                    label,
+                                    (x - pivot_img_size, y + h - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    text_color,
+                                    1,
+                                )
 
-                                    elif (
-                                        y + h + pivot_img_size < resolution_y
-                                        and x - pivot_img_size > 0
-                                    ):
-                                        # bottom left
-                                        freeze_img[
-                                            y + h : y + h + pivot_img_size,
-                                            x - pivot_img_size : x,
-                                        ] = display_img
+                                # connect face and text
+                                cv2.line(
+                                    freeze_img,
+                                    (x + int(w / 2), y + h),
+                                    (
+                                        x + int(w / 2) - int(w / 4),
+                                        y + h + int(pivot_img_size / 2),
+                                    ),
+                                    (67, 67, 67),
+                                    1,
+                                )
+                                cv2.line(
+                                    freeze_img,
+                                    (
+                                        x + int(w / 2) - int(w / 4),
+                                        y + h + int(pivot_img_size / 2),
+                                    ),
+                                    (x, y + h + int(pivot_img_size / 2)),
+                                    (67, 67, 67),
+                                    1,
+                                )
 
-                                        overlay = freeze_img.copy()
-                                        opacity = 0.4
-                                        cv2.rectangle(
-                                            freeze_img,
-                                            (x - pivot_img_size, y + h - 20),
-                                            (x, y + h),
-                                            (46, 200, 255),
-                                            cv2.FILLED,
-                                        )
-                                        cv2.addWeighted(
-                                            overlay,
-                                            opacity,
-                                            freeze_img,
-                                            1 - opacity,
-                                            0,
-                                            freeze_img,
-                                        )
+                            elif y - pivot_img_size > 0 and x - pivot_img_size > 0:
+                                # top left
+                                freeze_img[
+                                    y - pivot_img_size : y, x - pivot_img_size : x
+                                ] = display_img
 
-                                        cv2.putText(
-                                            freeze_img,
-                                            label,
-                                            (x - pivot_img_size, y + h - 10),
-                                            cv2.FONT_HERSHEY_SIMPLEX,
-                                            0.5,
-                                            text_color,
-                                            1,
-                                        )
+                                overlay = freeze_img.copy()
+                                opacity = 0.4
+                                cv2.rectangle(
+                                    freeze_img,
+                                    (x - pivot_img_size, y),
+                                    (x, y + 20),
+                                    (46, 200, 255),
+                                    cv2.FILLED,
+                                )
+                                cv2.addWeighted(
+                                    overlay,
+                                    opacity,
+                                    freeze_img,
+                                    1 - opacity,
+                                    0,
+                                    freeze_img,
+                                )
 
-                                        # connect face and text
-                                        cv2.line(
-                                            freeze_img,
-                                            (x + int(w / 2), y + h),
-                                            (
-                                                x + int(w / 2) - int(w / 4),
-                                                y + h + int(pivot_img_size / 2),
-                                            ),
-                                            (67, 67, 67),
-                                            1,
-                                        )
-                                        cv2.line(
-                                            freeze_img,
-                                            (
-                                                x + int(w / 2) - int(w / 4),
-                                                y + h + int(pivot_img_size / 2),
-                                            ),
-                                            (x, y + h + int(pivot_img_size / 2)),
-                                            (67, 67, 67),
-                                            1,
-                                        )
+                                cv2.putText(
+                                    freeze_img,
+                                    label,
+                                    (x - pivot_img_size, y + 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    text_color,
+                                    1,
+                                )
 
-                                    elif y - pivot_img_size > 0 and x - pivot_img_size > 0:
-                                        # top left
-                                        freeze_img[
-                                            y - pivot_img_size : y, x - pivot_img_size : x
-                                        ] = display_img
+                                # connect face and text
+                                cv2.line(
+                                    freeze_img,
+                                    (x + int(w / 2), y),
+                                    (
+                                        x + int(w / 2) - int(w / 4),
+                                        y - int(pivot_img_size / 2),
+                                    ),
+                                    (67, 67, 67),
+                                    1,
+                                )
+                                cv2.line(
+                                    freeze_img,
+                                    (
+                                        x + int(w / 2) - int(w / 4),
+                                        y - int(pivot_img_size / 2),
+                                    ),
+                                    (x, y - int(pivot_img_size / 2)),
+                                    (67, 67, 67),
+                                    1,
+                                )
 
-                                        overlay = freeze_img.copy()
-                                        opacity = 0.4
-                                        cv2.rectangle(
-                                            freeze_img,
-                                            (x - pivot_img_size, y),
-                                            (x, y + 20),
-                                            (46, 200, 255),
-                                            cv2.FILLED,
-                                        )
-                                        cv2.addWeighted(
-                                            overlay,
-                                            opacity,
-                                            freeze_img,
-                                            1 - opacity,
-                                            0,
-                                            freeze_img,
-                                        )
+                            elif (
+                                x + w + pivot_img_size < resolution_x
+                                and y + h + pivot_img_size < resolution_y
+                            ):
+                                # bottom righ
+                                freeze_img[
+                                    y + h : y + h + pivot_img_size,
+                                    x + w : x + w + pivot_img_size,
+                                ] = display_img
 
-                                        cv2.putText(
-                                            freeze_img,
-                                            label,
-                                            (x - pivot_img_size, y + 10),
-                                            cv2.FONT_HERSHEY_SIMPLEX,
-                                            0.5,
-                                            text_color,
-                                            1,
-                                        )
+                                overlay = freeze_img.copy()
+                                opacity = 0.4
+                                cv2.rectangle(
+                                    freeze_img,
+                                    (x + w, y + h - 20),
+                                    (x + w + pivot_img_size, y + h),
+                                    (46, 200, 255),
+                                    cv2.FILLED,
+                                )
+                                cv2.addWeighted(
+                                    overlay,
+                                    opacity,
+                                    freeze_img,
+                                    1 - opacity,
+                                    0,
+                                    freeze_img,
+                                )
 
-                                        # connect face and text
-                                        cv2.line(
-                                            freeze_img,
-                                            (x + int(w / 2), y),
-                                            (
-                                                x + int(w / 2) - int(w / 4),
-                                                y - int(pivot_img_size / 2),
-                                            ),
-                                            (67, 67, 67),
-                                            1,
-                                        )
-                                        cv2.line(
-                                            freeze_img,
-                                            (
-                                                x + int(w / 2) - int(w / 4),
-                                                y - int(pivot_img_size / 2),
-                                            ),
-                                            (x, y - int(pivot_img_size / 2)),
-                                            (67, 67, 67),
-                                            1,
-                                        )
+                                cv2.putText(
+                                    freeze_img,
+                                    label,
+                                    (x + w, y + h - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    text_color,
+                                    1,
+                                )
 
-                                    elif (
-                                        x + w + pivot_img_size < resolution_x
-                                        and y + h + pivot_img_size < resolution_y
-                                    ):
-                                        # bottom righ
-                                        freeze_img[
-                                            y + h : y + h + pivot_img_size,
-                                            x + w : x + w + pivot_img_size,
-                                        ] = display_img
+                                # connect face and text
+                                cv2.line(
+                                    freeze_img,
+                                    (x + int(w / 2), y + h),
+                                    (
+                                        x + int(w / 2) + int(w / 4),
+                                        y + h + int(pivot_img_size / 2),
+                                    ),
+                                    (67, 67, 67),
+                                    1,
+                                )
+                                cv2.line(
+                                    freeze_img,
+                                    (
+                                        x + int(w / 2) + int(w / 4),
+                                        y + h + int(pivot_img_size / 2),
+                                    ),
+                                    (x + w, y + h + int(pivot_img_size / 2)),
+                                    (67, 67, 67),
+                                    1,
+                                )
+                        except Exception as err:  # pylint: disable=broad-except
+                            logger.error(str(err))
 
-                                        overlay = freeze_img.copy()
-                                        opacity = 0.4
-                                        cv2.rectangle(
-                                            freeze_img,
-                                            (x + w, y + h - 20),
-                                            (x + w + pivot_img_size, y + h),
-                                            (46, 200, 255),
-                                            cv2.FILLED,
-                                        )
-                                        cv2.addWeighted(
-                                            overlay,
-                                            opacity,
-                                            freeze_img,
-                                            1 - opacity,
-                                            0,
-                                            freeze_img,
-                                        )
+                    # -------------------------------
+                    
+            cv2.rectangle(freeze_img, (10, 10), (90, 50), (67, 67, 67), -10)
+            # cv2.imshow("img", freeze_img)
 
-                                        cv2.putText(
-                                            freeze_img,
-                                            label,
-                                            (x + w, y + h - 10),
-                                            cv2.FONT_HERSHEY_SIMPLEX,
-                                            0.5,
-                                            text_color,
-                                            1,
-                                        )
+    
+            face_included_frames = 0
+            freeze = False
 
-                                        # connect face and text
-                                        cv2.line(
-                                            freeze_img,
-                                            (x + int(w / 2), y + h),
-                                            (
-                                                x + int(w / 2) + int(w / 4),
-                                                y + h + int(pivot_img_size / 2),
-                                            ),
-                                            (67, 67, 67),
-                                            1,
-                                        )
-                                        cv2.line(
-                                            freeze_img,
-                                            (
-                                                x + int(w / 2) + int(w / 4),
-                                                y + h + int(pivot_img_size / 2),
-                                            ),
-                                            (x + w, y + h + int(pivot_img_size / 2)),
-                                            (67, 67, 67),
-                                            1,
-                                        )
-                                except Exception as err:  # pylint: disable=broad-except
-                                    logger.error(str(err))
-
-                        tic = time.time()  # in this way, freezed image can show 5 seconds
-
-                        # -------------------------------
-
-                time_left = int(time_threshold - (toc - tic) + 1)
-
-                cv2.rectangle(freeze_img, (10, 10), (90, 50), (67, 67, 67), -10)
-                cv2.putText(
-                    freeze_img,
-                    str(time_left),
+        else:
+            cv2.putText(
+                    img,
+                    str(count),
                     (40, 40),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     1,
                     (255, 255, 255),
                     1,
                 )
-
-                cv2.imshow("img", freeze_img)
-
-                freezed_frame = freezed_frame + 1
-            else:
-                face_detected = False
-                face_included_frames = 0
-                freeze = False
-                freezed_frame = 0
-
-        else:
             cv2.imshow("img", img)
 
-        
-        if (shape == shape2) and save:
-            time_val = time.time()
-            cv2.imwrite((f"/home/mohe/Desktop/db/database/{time_val}.jpg"),  save_image)
-            print("saved")
-            # time.sleep(4)
-            save_csv(csv_path="/home/mohe/Desktop/db/RF_db.csv", db_path="/home/mohe/Desktop/db/database/sefic", saving_path=f"/home/mohe/Desktop/db/database")
-            save = False
+        if save:
+            if face_detected:
+                time_val = time.time()
+                cv2.imwrite((f"/home/mohe/Desktop/db/database/{time_val}.jpg"),  save_image)
+                print("saved")
+                count += 1
+                save = False
+                # time.sleep(4)
+                # save_csv(csv_path="/home/mohe/Desktop/db/RF_db.csv", db_path="/home/mohe/Desktop/db/database/sefic", saving_path=f"/home/mohe/Desktop/db/database")
 
-        if (shape != shape2):
-            save = True
+        if not save:
+            if not face_detected:
+                save = True
             
             
 
